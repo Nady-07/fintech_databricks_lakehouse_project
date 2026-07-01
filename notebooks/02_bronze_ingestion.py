@@ -1,0 +1,48 @@
+-- MAGIC %md
+-- MAGIC # 3. Production Ingestion Optimization (Dynamic Automation Loop)
+-- MAGIC
+-- MAGIC To scale our architecture and follow the **DRY (Don't Repeat Yourself)** engineering principle, we replace the manual individual scripts with a **Python-wrapped Spark SQL pipeline**. 
+-- MAGIC
+-- MAGIC This automated loop transforms our notebook into a self-configuring, production-ready ingestion engine.
+-- MAGIC
+-- MAGIC ### **How the Optimization Pipeline Works:**
+-- MAGIC 1. **Directory Sweeping:** `dbutils.fs.ls()` scans our raw storage Volume to discover files dynamically.
+-- MAGIC 2. **File Isolation:** The pipeline isolates and identifies files matching the target `.csv` extension.
+-- MAGIC 3. **Dynamic Table Scoping:** The extension is stripped from the file name, and the result is encapsulated in SQL backticks (`` ` ``). This ensures names containing spaces or hyphens are generated safely without failing.
+-- MAGIC 4. **Bulk Execution:** `spark.sql()` compiles and executes the `CREATE OR REPLACE TABLE` logic for every file found in a single notebook execution pass.
+-- MAGIC
+-- MAGIC ### **Business Value:**
+-- MAGIC If our upstream financial platforms drop 5 new transaction history or risk reporting files into the landing zone tomorrow, this notebook will adapt instantly, auto-generating the new Bronze Delta tables on its next run without requiring any manual developer code updates.
+-- COMMAND ----------
+-- MAGIC %python
+-- MAGIC
+-- MAGIC import re
+-- MAGIC
+-- MAGIC raw_path = '/Volumes/fintech/bronze/raw_data/'
+-- MAGIC bronze_schema = 'fintech.bronze'
+-- MAGIC
+-- MAGIC files = dbutils.fs.ls(raw_path)
+-- MAGIC
+-- MAGIC for file in files:
+-- MAGIC     if file.name.endswith(".csv"):
+-- MAGIC         table_name = file.name.replace(".csv", "")
+-- MAGIC         table_name = re.sub(r"[^a-zA-Z0-9_]", "_", table_name).lower()
+-- MAGIC
+-- MAGIC         sql_statement = f"""
+-- MAGIC         CREATE OR REPLACE TABLE {bronze_schema}.`{table_name}`
+-- MAGIC         USING DELTA
+-- MAGIC         AS
+-- MAGIC         SELECT
+-- MAGIC           *,
+-- MAGIC           _metadata.file_path AS file_path,
+-- MAGIC           current_timestamp() AS ingest_ts
+-- MAGIC         FROM read_files(
+-- MAGIC           '{raw_path}',
+-- MAGIC           format => 'csv',
+-- MAGIC           header => true,
+-- MAGIC           inferSchema => false
+-- MAGIC         )
+-- MAGIC         """
+-- MAGIC         spark.sql(sql_statement)
+-- MAGIC
+-- MAGIC         print(f"Successfully created table: {bronze_schema}.`{table_name}`")
